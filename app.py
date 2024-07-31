@@ -1,6 +1,5 @@
 import xml.etree.ElementTree as ET
-#from translate import Translator
-from google_trans_new import google_translator as Translator
+from deep_translator import GoogleTranslator as Translator
 from io import BytesIO
 import streamlit as st
 
@@ -8,11 +7,11 @@ def translate_text_preserving_tags(element, translator, source_lang='auto', targ
     for subelement in element:
         try:
             if subelement.text:
-                translation = translator.translate(subelement.text, lang_tgt=target_lang)
-                subelement.text = translation.text
+                translation = translator.translate(subelement.text)
+                subelement.text = translation
             if subelement.tail:
-                translation = translator.translate(subelement.tail, lang_tgt=target_lang)
-                subelement.tail = translation.text
+                translation = translator.translate(subelement.tail)
+                subelement.tail = translation
         except:
             pass
         translate_text_preserving_tags(subelement, translator, source_lang=source_lang, target_lang=target_lang)
@@ -21,7 +20,7 @@ def translate_xliff(input_file, output_file, source_lang='auto', target_lang='en
     ET.register_namespace('', 'urn:oasis:names:tc:xliff:document:1.2')
     tree = ET.parse(input_file)
     root = tree.getroot()
-    translator = Translator()
+    translator = Translator(source='auto', target=target_lang)
 
     for trans_unit in root.findall(".//{urn:oasis:names:tc:xliff:document:1.2}trans-unit"):
         source = trans_unit.find('{urn:oasis:names:tc:xliff:document:1.2}source')
@@ -33,8 +32,14 @@ def translate_xliff(input_file, output_file, source_lang='auto', target_lang='en
             else:
                 target.clear()
             translate_text_preserving_tags(source, translator, source_lang=source_lang, target_lang=target_lang)
-            for subelement in source:
-                target.append(subelement)
+            if source.text:
+                translated_text = translator.translate(source.text)
+                target.text = translated_text
+            for subelement in list(source):
+                translated_subelement = ET.Element(subelement.tag, subelement.attrib)
+                translated_subelement.text = translator.translate(subelement.text) if subelement.text else ''
+                translated_subelement.tail = translator.translate(subelement.tail) if subelement.tail else ''
+                target.append(translated_subelement)
 
     tree.write(output_file, encoding='utf-8', xml_declaration=True)
     output_file.seek(0)
