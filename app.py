@@ -14,7 +14,12 @@ def translate_text_preserving_tags(element, translator, source_lang='auto', targ
                 subelement.tail = translation
         except:
             pass
+        # Recursively process subelements
         translate_text_preserving_tags(subelement, translator, source_lang=source_lang, target_lang=target_lang)
+        # If the subelement has children, translate them too
+        if len(subelement) > 0:
+            translate_text_preserving_tags(subelement, translator, source_lang=source_lang, target_lang=target_lang)
+
 
 def translate_xliff(input_file, output_file, source_lang='auto', target_lang='en'):
     ET.register_namespace('', 'urn:oasis:names:tc:xliff:document:1.2')
@@ -32,14 +37,10 @@ def translate_xliff(input_file, output_file, source_lang='auto', target_lang='en
             else:
                 target.clear()
             translate_text_preserving_tags(source, translator, source_lang=source_lang, target_lang=target_lang)
-            if source.text:
-                translated_text = translator.translate(source.text)
-                target.text = translated_text
+            # Append translated subelements to target
             for subelement in list(source):
-                translated_subelement = ET.Element(subelement.tag, subelement.attrib)
-                translated_subelement.text = translator.translate(subelement.text) if subelement.text else ''
-                translated_subelement.tail = translator.translate(subelement.tail) if subelement.tail else ''
-                target.append(translated_subelement)
+                target.append(subelement)
+
 
     tree.write(output_file, encoding='utf-8', xml_declaration=True)
     output_file.seek(0)
