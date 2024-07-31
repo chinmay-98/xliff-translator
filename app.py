@@ -1,31 +1,43 @@
 import xml.etree.ElementTree as ET
-from translate import Translator
+#from translate import Translator
+from google_trans_new import google_translator as Translator
 from io import BytesIO
 import streamlit as st
 
-def translate_text_preserving_tags(element, translator):
+def translate_text_preserving_tags(element, translator, source_lang='auto', target_lang='en'):
     for subelement in element:
-        if subelement.text:
-            subelement.text = translator.translate(subelement.text)
-        if subelement.tail:
-            subelement.tail = translator.translate(subelement.tail)
-        translate_text_preserving_tags(subelement, translator)
+        try:
+            if subelement.text:
+                translation = translator.translate(subelement.text, lang_tgt=target_lang)
+                subelement.text = translation.text
+            if subelement.tail:
+                translation = translator.translate(subelement.tail, lang_tgt=target_lang)
+                subelement.tail = translation.text
+        except:
+            pass
+        translate_text_preserving_tags(subelement, translator, source_lang=source_lang, target_lang=target_lang)
 
-def translate_xliff(input_file, output_file, source_lang='en', target_lang='pt'):
+def translate_xliff(input_file, output_file, source_lang='auto', target_lang='en'):
     ET.register_namespace('', 'urn:oasis:names:tc:xliff:document:1.2')
     tree = ET.parse(input_file)
     root = tree.getroot()
-    translator = Translator(from_lang=source_lang, to_lang=target_lang)
+    translator = Translator()
+
     for trans_unit in root.findall(".//{urn:oasis:names:tc:xliff:document:1.2}trans-unit"):
         source = trans_unit.find('{urn:oasis:names:tc:xliff:document:1.2}source')
+        target = trans_unit.find('{urn:oasis:names:tc:xliff:document:1.2}target')
         if source is not None:
-            target = ET.Element('target')
+            if target is None:
+                target = ET.Element('target')
+                trans_unit.append(target)
+            else:
+                target.clear()
+            translate_text_preserving_tags(source, translator, source_lang=source_lang, target_lang=target_lang)
             for subelement in source:
                 target.append(subelement)
-            translate_text_preserving_tags(target, translator)
-            source_index = list(trans_unit).index(source)
-            trans_unit.insert(source_index + 1, target)
+
     tree.write(output_file, encoding='utf-8', xml_declaration=True)
+    output_file.seek(0)
 
 
 st.title("XLIFF Translator")
