@@ -57,7 +57,9 @@ language_codes = {
     "Spanish": "es",
     "French": "fr",
     "Arabic": "ar",
-    "Portuguese": "pt"
+    "Portuguese": "pt",
+    "Russian": "ru",
+    "Ukrainian":"uk"
 }
 
 source_lang = container2.selectbox("Source Language", list(language_codes.keys()))
