@@ -3,6 +3,7 @@ from deep_translator import GoogleTranslator as Translator
 from io import BytesIO
 import streamlit as st
 import time
+from languages import language_codes
 
 def translate_text(text, translator):
     """Safely translate text with error handling and rate limiting"""
@@ -86,20 +87,6 @@ st.title("XLIFF Translator")
 col1, col2 = st.columns([2,1])
 container1 = col1.container(height=200)
 container2 = col2.container(height=200)
-
-language_codes = {
-    "English": "en",
-    "Spanish": "es",
-    "French": "fr",
-    "Arabic": "ar",
-    "Portuguese": "pt",
-    "Russian": "ru",
-    "Ukrainian": "uk",
-    "German": "de",
-    "Chinese (Simplified)": "zh-CN",
-    "Japanese": "ja"
-}
-
 source_lang = container2.selectbox("Source Language", list(language_codes.keys()))
 target_lang = container2.selectbox("Target Language", list(language_codes.keys()))
 uploaded_file = container1.file_uploader("Upload the XLIFF file you wish to convert", type=["xlf"])
