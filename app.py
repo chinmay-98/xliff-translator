@@ -114,83 +114,109 @@ if st.button("Translate"):
         # Create result table
         result_table = []
         
-        # For ZIP file creation
+        # Initialize containers for showing progress
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Process each target language
+        total_start_time = time.time()
+        
+        # For single language translation
+        single_file_data = None
+        single_file_name = None
+        
+        # For multiple language translations
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            
-            # Process each target language
-            with st.spinner(f'Translating to {len(target_langs)} languages...'):
-                total_start_time = time.time()
+            for idx, target_lang_name in enumerate(target_langs):
+                target_lang_code = language_codes[target_lang_name]
                 
-                # Create a progress bar
-                progress_bar = st.progress(0)
+                # Update status text and progress bar for the current language
+                status_text.text(f"Processing {target_lang_name}... ({idx+1}/{len(target_langs)})")
+                progress_bar.progress((idx) / len(target_langs))
                 
-                for idx, target_lang_name in enumerate(target_langs):
-                    # Update progress
-                    progress_bar.progress((idx) / len(target_langs))
+                if source_lang_code == target_lang_code:
+                    st.warning(f"**Warning:** Source and target language '{target_lang_name}' are the same! Skipping...")
+                    continue
+                
+                # Process the file for this language
+                input_file = BytesIO(input_file_content)
+                
+                try:
+                    translated_file, time_taken = translate_xliff(input_file, source_lang_code, target_lang_code)
                     
-                    target_lang_code = language_codes[target_lang_name]
-                    
-                    if source_lang_code == target_lang_code:
-                        st.warning(f"**Warning:** Source and target language '{target_lang_name}' are the same! Skipping...")
-                        continue
-                    
-                    # Process the file for this language
-                    input_file = BytesIO(input_file_content)
-                    status_text = st.empty()
-                    status_text.text(f"Processing {target_lang_name}...")
-                    
-                    try:
-                        translated_file, time_taken = translate_xliff(input_file, source_lang_code, target_lang_code)
-                        
-                        # Add file to ZIP
+                    # For single file download
+                    if len(target_langs) == 1:
+                        single_file_data = translated_file.getvalue()
+                        single_file_name = f"{target_lang_code}_{input_file_name}"
+                    else:
+                        # Add file to ZIP for multiple languages
                         zip_file.writestr(f"{target_lang_code}_{input_file_name}", translated_file.getvalue())
-                        
-                        # Add result to table
-                        result_table.append({
-                            "Language": target_lang_name,
-                            "Status": "✅ Success",
-                            "Time": f"{time_taken} sec"
-                        })
-                    except Exception as e:
-                        st.error(f"Error translating to {target_lang_name}: {str(e)}")
-                        result_table.append({
-                            "Language": target_lang_name,
-                            "Status": "❌ Failed",
-                            "Time": "N/A"
-                        })
+                    
+                    # Add result to table
+                    result_table.append({
+                        "Language": target_lang_name,
+                        "Status": "✅ Success",
+                        "Time": f"{time_taken} sec"
+                    })
+                    
+                except Exception as e:
+                    st.error(f"Error translating to {target_lang_name}: {str(e)}")
+                    result_table.append({
+                        "Language": target_lang_name,
+                        "Status": "❌ Failed",
+                        "Time": "N/A"
+                    })
                 
-                # Complete progress bar
-                progress_bar.progress(1.0)
-                
+                # Update progress after each language is processed
+                progress_bar.progress((idx + 1) / len(target_langs))
+            
+            # Only add summary to ZIP if we have multiple languages
+            if len(target_langs) > 1:
                 # Calculate total time
                 total_time = round(time.time() - total_start_time, 2)
-            
-            # Add a summary file to the ZIP
-            summary_content = "XLIFF Translation Summary\n"
-            summary_content += f"Source language: {source_lang}\n"
-            summary_content += f"Total time: {total_time} seconds\n\n"
-            summary_content += "Language results:\n"
-            for result in result_table:
-                summary_content += f"- {result['Language']}: {result['Status']} ({result['Time']})\n"
-            
-            zip_file.writestr("translation_summary.txt", summary_content)
+                
+                # Add a summary file to the ZIP
+                summary_content = "XLIFF Translation Summary\n"
+                summary_content += f"Source language: {source_lang}\n"
+                summary_content += f"Total time: {total_time} seconds\n\n"
+                summary_content += "Language results:\n"
+                for result in result_table:
+                    summary_content += f"- {result['Language']}: {result['Status']} ({result['Time']})\n"
+                
+                zip_file.writestr("translation_summary.txt", summary_content)
+        
+        # Complete progress
+        status_text.text("Translation complete!")
+        progress_bar.progress(1.0)
+        
+        # Calculate and display total time
+        total_time = round(time.time() - total_start_time, 2)
+        st.info(f"Total processing time: {total_time} seconds")
         
         # Display results in a table
         st.subheader("Translation Results")
         st.table(result_table)
         
-        # Show total time
-        st.info(f"Total processing time: {total_time} seconds")
+        # Provide download options based on number of languages
+        st.success("Translation complete! You can download your file(s) below.", icon="✅")
         
-        # Provide download button for ZIP file
-        st.success("Translation complete! You can download all files as a ZIP archive.", icon="✅")
-        st.download_button(
-            label="Download All Translations (ZIP)",
-            data=zip_buffer.getvalue(),
-            file_name=f"xliff_translations_{source_lang_code}.zip",
-            mime="application/zip"
-        )
+        if len(target_langs) == 1 and single_file_data:
+            # Direct file download for single language
+            st.download_button(
+                label=f"Download {target_langs[0]} Translation",
+                data=single_file_data,
+                file_name=single_file_name,
+                mime="application/x-xliff+xml"
+            )
+        else:
+            # ZIP download for multiple languages
+            st.download_button(
+                label="Download All Translations (ZIP)",
+                data=zip_buffer.getvalue(),
+                file_name=f"xliff_translations_{source_lang_code}.zip",
+                mime="application/zip"
+            )
     elif not uploaded_file:
         st.error("Please upload an XLIFF file.")
     elif not target_langs:
