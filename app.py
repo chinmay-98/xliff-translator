@@ -18,21 +18,25 @@ def translate_text(text, translator):
         st.warning(f"Translation error: {str(e)}")
         return text
 
-def process_element_text(element, translator):
+def process_element_text(element, translator, progress_callback=None):
     """Process text content of an element and its children"""
     # Translate the element's text if it exists
     if element.text and element.text.strip():
         element.text = translate_text(element.text, translator)
+        if progress_callback:
+            progress_callback()
     
     # Process all child elements
     for child in element:
-        process_element_text(child, translator)
+        process_element_text(child, translator, progress_callback)
         
         # Translate the child's tail text if it exists
         if child.tail and child.tail.strip():
             child.tail = translate_text(child.tail, translator)
+            if progress_callback:
+                progress_callback()
 
-def translate_xliff(input_file, source_lang, target_lang):
+def translate_xliff(input_file, source_lang, target_lang, progress_callback=None):
     """Translate an XLIFF file and return the translated content and time taken"""
     start_time = time.time()
     
@@ -49,14 +53,22 @@ def translate_xliff(input_file, source_lang, target_lang):
     # Initialize translator
     translator = Translator(source=source_lang, target=target_lang)
     
+    # Count total trans-units to calculate progress
+    trans_units = root.findall(".//{urn:oasis:names:tc:xliff:document:1.2}trans-unit")
+    total_units = len(trans_units)
+    completed_units = 0
+    
     # Process all trans-unit elements
-    for trans_unit in root.findall(".//{urn:oasis:names:tc:xliff:document:1.2}trans-unit"):
+    for trans_unit in trans_units:
         # Find source and target elements
         source = trans_unit.find('{urn:oasis:names:tc:xliff:document:1.2}source')
         target = trans_unit.find('{urn:oasis:names:tc:xliff:document:1.2}target')
         
         # Skip if no source
         if source is None:
+            completed_units += 1
+            if progress_callback:
+                progress_callback(completed_units / total_units)
             continue
             
         # Create target element if it doesn't exist
@@ -76,8 +88,18 @@ def translate_xliff(input_file, source_lang, target_lang):
             trans_unit.append(target_copy)
             target = target_copy
             
+        # Define a local progress updater for text elements
+        def update_progress_within_unit():
+            # This intentionally doesn't update the overall progress to avoid too many updates
+            pass
+            
         # Now translate the content of the target element
-        process_element_text(target, translator)
+        process_element_text(target, translator, update_progress_within_unit)
+        
+        # Update progress after each trans-unit is processed
+        completed_units += 1
+        if progress_callback:
+            progress_callback(completed_units / total_units)
     
     # Write the modified tree to the output file
     tree.write(output_file, encoding='utf-8', xml_declaration=True)
@@ -118,6 +140,11 @@ if st.button("Translate"):
         progress_bar = st.progress(0)
         status_text = st.empty()
         
+        # Calculate progress segments for each language
+        num_languages = len(target_langs)
+        segment_size = 1.0 / num_languages
+        current_segment = 0
+        
         # Process each target language
         total_start_time = time.time()
         
@@ -131,19 +158,31 @@ if st.button("Translate"):
             for idx, target_lang_name in enumerate(target_langs):
                 target_lang_code = language_codes[target_lang_name]
                 
-                # Update status text and progress bar for the current language
+                # Update status text for the current language
                 status_text.text(f"Processing {target_lang_name}... ({idx+1}/{len(target_langs)})")
-                progress_bar.progress((idx) / len(target_langs))
                 
                 if source_lang_code == target_lang_code:
                     st.warning(f"**Warning:** Source and target language '{target_lang_name}' are the same! Skipping...")
+                    current_segment += segment_size
+                    progress_bar.progress(current_segment)
                     continue
                 
                 # Process the file for this language
                 input_file = BytesIO(input_file_content)
                 
+                # Define a progress callback for this language segment
+                def update_progress(file_progress=0):
+                    # Calculate overall progress: completed segments + progress within current segment
+                    overall_progress = current_segment + (file_progress * segment_size)
+                    progress_bar.progress(min(overall_progress, 1.0))  # Ensure we don't exceed 100%
+                
                 try:
-                    translated_file, time_taken = translate_xliff(input_file, source_lang_code, target_lang_code)
+                    translated_file, time_taken = translate_xliff(
+                        input_file, 
+                        source_lang_code, 
+                        target_lang_code, 
+                        update_progress
+                    )
                     
                     # For single file download
                     if len(target_langs) == 1:
@@ -168,8 +207,9 @@ if st.button("Translate"):
                         "Time": "N/A"
                     })
                 
-                # Update progress after each language is processed
-                progress_bar.progress((idx + 1) / len(target_langs))
+                # Move to the next segment
+                current_segment += segment_size
+                progress_bar.progress(min(current_segment, 1.0))
             
             # Only add summary to ZIP if we have multiple languages
             if len(target_langs) > 1:
