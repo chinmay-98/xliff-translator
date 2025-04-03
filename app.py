@@ -3,15 +3,16 @@ from deep_translator import GoogleTranslator as Translator
 from io import BytesIO
 import streamlit as st
 import time
+import zipfile
 from languages import language_codes
 
 def translate_text(text, translator):
-    """Safely translate text with error handling and rate limiting"""
+    """Safely translate text with error handling and minimal rate limiting"""
     if not text or text.strip() == "":
         return text
     try:
-        # Add a small delay to avoid Google Translate rate limits
-        time.sleep(0.5)
+        # Reduced delay for faster processing - adjust if you encounter rate limits
+        time.sleep(0.1)
         return translator.translate(text)
     except Exception as e:
         st.warning(f"Translation error: {str(e)}")
@@ -31,7 +32,13 @@ def process_element_text(element, translator):
         if child.tail and child.tail.strip():
             child.tail = translate_text(child.tail, translator)
 
-def translate_xliff(input_file, output_file, source_lang='auto', target_lang='en'):
+def translate_xliff(input_file, source_lang, target_lang):
+    """Translate an XLIFF file and return the translated content and time taken"""
+    start_time = time.time()
+    
+    # Create a new BytesIO object for the output
+    output_file = BytesIO()
+    
     # Register the XLIFF namespace
     ET.register_namespace('', 'urn:oasis:names:tc:xliff:document:1.2')
     
@@ -42,15 +49,8 @@ def translate_xliff(input_file, output_file, source_lang='auto', target_lang='en
     # Initialize translator
     translator = Translator(source=source_lang, target=target_lang)
     
-    # Track translation progress
-    total_units = len(root.findall(".//{urn:oasis:names:tc:xliff:document:1.2}trans-unit"))
-    progress_bar = st.progress(0)
-    
     # Process all trans-unit elements
-    for i, trans_unit in enumerate(root.findall(".//{urn:oasis:names:tc:xliff:document:1.2}trans-unit")):
-        # Update progress
-        progress_bar.progress((i + 1) / total_units)
-        
+    for trans_unit in root.findall(".//{urn:oasis:names:tc:xliff:document:1.2}trans-unit"):
         # Find source and target elements
         source = trans_unit.find('{urn:oasis:names:tc:xliff:document:1.2}source')
         target = trans_unit.find('{urn:oasis:names:tc:xliff:document:1.2}target')
@@ -82,34 +82,116 @@ def translate_xliff(input_file, output_file, source_lang='auto', target_lang='en
     # Write the modified tree to the output file
     tree.write(output_file, encoding='utf-8', xml_declaration=True)
     output_file.seek(0)
+    
+    # Calculate time taken
+    time_taken = round(time.time() - start_time, 2)
+    
+    return output_file, time_taken
 
-st.title("XLIFF Translator")
+st.title("Multi-Language XLIFF Translator")
+
 col1, col2 = st.columns([2,1])
 container1 = col1.container(height=200)
 container2 = col2.container(height=200)
+
 source_lang = container2.selectbox("Source Language", list(language_codes.keys()))
-target_lang = container2.selectbox("Target Language", list(language_codes.keys()))
+
+# Multi-select for target languages
+target_langs = container2.multiselect(
+    "Target Languages (Select Multiple)",
+    options=list(language_codes.keys()),
+    default=["Spanish"]  # Default selection
+)
+
 uploaded_file = container1.file_uploader("Upload the XLIFF file you wish to convert", type=["xlf"])
 
 if st.button("Translate"):
-    if uploaded_file is not None:
+    if uploaded_file is not None and target_langs:
         input_file_name = uploaded_file.name
-        input_file = BytesIO(uploaded_file.read())
-        output_file = BytesIO()
+        input_file_content = uploaded_file.read()
         source_lang_code = language_codes[source_lang]
-        target_lang_code = language_codes[target_lang]
         
-        with st.spinner('The conversion process has started... please wait, this may take several minutes for large files!'):
-            if source_lang_code == target_lang_code:
-                st.warning("**Warning:** Source and target language are selected as same!")
-            translate_xliff(input_file, output_file, source_lang_code, target_lang_code)
+        # Create result table
+        result_table = []
         
-        st.success("Translation complete! You can download the file now.", icon="✅")
+        # For ZIP file creation
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            
+            # Process each target language
+            with st.spinner(f'Translating to {len(target_langs)} languages...'):
+                total_start_time = time.time()
+                
+                # Create a progress bar
+                progress_bar = st.progress(0)
+                
+                for idx, target_lang_name in enumerate(target_langs):
+                    # Update progress
+                    progress_bar.progress((idx) / len(target_langs))
+                    
+                    target_lang_code = language_codes[target_lang_name]
+                    
+                    if source_lang_code == target_lang_code:
+                        st.warning(f"**Warning:** Source and target language '{target_lang_name}' are the same! Skipping...")
+                        continue
+                    
+                    # Process the file for this language
+                    input_file = BytesIO(input_file_content)
+                    status_text = st.empty()
+                    status_text.text(f"Processing {target_lang_name}...")
+                    
+                    try:
+                        translated_file, time_taken = translate_xliff(input_file, source_lang_code, target_lang_code)
+                        
+                        # Add file to ZIP
+                        zip_file.writestr(f"{target_lang_code}_{input_file_name}", translated_file.getvalue())
+                        
+                        # Add result to table
+                        result_table.append({
+                            "Language": target_lang_name,
+                            "Status": "✅ Success",
+                            "Time": f"{time_taken} sec"
+                        })
+                    except Exception as e:
+                        st.error(f"Error translating to {target_lang_name}: {str(e)}")
+                        result_table.append({
+                            "Language": target_lang_name,
+                            "Status": "❌ Failed",
+                            "Time": "N/A"
+                        })
+                
+                # Complete progress bar
+                progress_bar.progress(1.0)
+                
+                # Calculate total time
+                total_time = round(time.time() - total_start_time, 2)
+            
+            # Add a summary file to the ZIP
+            summary_content = "XLIFF Translation Summary\n"
+            summary_content += f"Source language: {source_lang}\n"
+            summary_content += f"Total time: {total_time} seconds\n\n"
+            summary_content += "Language results:\n"
+            for result in result_table:
+                summary_content += f"- {result['Language']}: {result['Status']} ({result['Time']})\n"
+            
+            zip_file.writestr("translation_summary.txt", summary_content)
+        
+        # Display results in a table
+        st.subheader("Translation Results")
+        st.table(result_table)
+        
+        # Show total time
+        st.info(f"Total processing time: {total_time} seconds")
+        
+        # Provide download button for ZIP file
+        st.success("Translation complete! You can download all files as a ZIP archive.", icon="✅")
         st.download_button(
-            label="Download Translated XLIFF",
-            data=output_file.getvalue(),
-            file_name=f"{target_lang_code}_{input_file_name}",
-            mime="application/octet-stream"
+            label="Download All Translations (ZIP)",
+            data=zip_buffer.getvalue(),
+            file_name=f"xliff_translations_{source_lang_code}.zip",
+            mime="application/zip"
         )
-    else:
+    elif not uploaded_file:
         st.error("Please upload an XLIFF file.")
+    elif not target_langs:
+        st.error("Please select at least one target language.")
